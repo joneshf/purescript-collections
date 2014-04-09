@@ -22,19 +22,36 @@ module Data.Collection where
     show (Leaf x) = "Leaf(" ++ show x ++ ")"
     show (Branch l r) = "Branch(" ++ show l ++ ", " ++ show r ++ ")"
 
-  -- | This differs from the standard Foldable
+  data Stack a = EmptyStack
+               | Push a (Stack a)
+
+  instance showStack :: (Show a) => Show (Stack a) where
+    show EmptyStack = "EmptyStack"
+    show (Push s ss) = "Stack(" ++ show s ++ ", " ++ show ss ++ ")"
+
+  data Queue a = EmptyQueue
+               | Enqueue a (Queue a)
+
+  instance showQueue :: (Show a) => Show (Queue a) where
+    show EmptyQueue = "EmptyQueue"
+    show (Enqueue q qs) = "Queue(" ++ show q ++ ", " ++ show qs ++ ")"
+
+  -- | This differs from the standard `Foldable`
   --   in that it doesn't attempt to impose an ordering.
-  --   specifically, there is no notion of `foldl` or `foldr`
+  --   Specifically, there is no notion of `foldl` or `foldr`
+  --
+  --   It intentionally conflict with the standard `Foldable`.
+  --
+  --   Minimum definition needs `fold`.
   class Foldable f where
-    -- `fold` is the minimum required to implement a `Foldable`.
     fold :: forall a b. (a -> b -> b) -> b -> f a -> b
     -- `size` should have a default implementation.
     size :: forall a. f a -> Number
     -- size = fold (const ((+) 1)) 0
 
   -- | An unordered collection of things.
+  --   Minimum definition needs `cons`.
   class (Foldable c, Monoid (c a)) <= Collection c a where
-    -- cons` is the minimum required to implement a `Collection`.
     cons :: a -> c a -> c a
 
     -- `filter` and `partition` should have default implementations.
@@ -44,9 +61,15 @@ module Data.Collection where
     -- partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
 
   -- | Collection with some sense of order.
+  --   Minimum definition needs one of `foldl` or `foldr`,
+  --   and one of `first` or `last`.
   class (Collection s a) <= Sequence s a where
-    -- Minimum definition needs `foldl`, and one of `first` or `last`.
     foldl :: forall b. (a -> b -> a) -> a -> s b -> a
+    -- foldl f z xs = foldr (flip f) z (reverse xs)
+    -- `foldr` has the same type as `fold`,
+    -- but enforces an ordering on the evaluation.
+    foldr :: forall b. (a -> b -> b) -> b -> s a -> b
+    -- foldr f z xs = foldl (flip f) z (reverse xs)
     first :: s a -> SeqView s a
     -- first xs = case last (reverse xs) of
     --   SeqCons x xs' -> SeqCons x (reverse xs')
@@ -66,7 +89,7 @@ module Data.Collection where
     fold _ z [] = z
     fold f z (x:xs) = x `f` (fold f z xs)
 
-    size = fold (const ((+) 1)) 0
+    size xs = fold (const ((+) 1)) 0 xs
 
   instance collectionArray :: Collection [] a where
     cons = (:)
@@ -77,6 +100,8 @@ module Data.Collection where
   instance sequenceArray :: Sequence [] a where
     foldl _ z [] = z
     foldl f z (x:xs) = foldl f (z `f` x) xs
+
+    foldr f z xs = fold f z xs
 
     first [] = SeqNull
     first (x:xs) = SeqCons x xs
@@ -95,7 +120,8 @@ module Data.Collection where
     fold _ z Nothing = z
     fold f z (Just x) = x `f` z
 
-    size = fold (const ((+) 1)) 0
+    size Nothing = 0
+    size (Just _) = 1
 
   instance semigroupMaybe :: (Semigroup a) => Semigroup (Maybe a) where
     (<>) (Just x) (Just y) = Just (x <> y)
@@ -108,12 +134,15 @@ module Data.Collection where
     cons x Nothing = Just x
     cons x (Just y) = Just (x <> y)
 
+    -- Use default implementations.
     filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
     partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
 
   instance sequenceMaybe :: (Monoid a) => Sequence Maybe a where
     foldl _ z Nothing = z
     foldl f z (Just x) = z `f` x
+
+    foldr f z xs = fold f z xs
 
     first Nothing = SeqNull
     first (Just x) = SeqCons x Nothing
@@ -128,11 +157,12 @@ module Data.Collection where
   -- Tree
 
   instance foldableTree :: Foldable Tree where
-    fold _ z _  = z
+    fold _ z Bud  = z
     fold f z (Leaf x) = x `f` z
     fold f z (Branch l r) = fold f (fold f z l) r
 
-    size = fold (const ((+) 1)) 0
+    -- Use default implementation.
+    size xs = fold (const ((+) 1)) 0 xs
 
   -- Using a `Tree` as a `Semigroup` only makes sense if we ignore
   -- the structure of the tree, and focus on the semantics of a tree.
@@ -149,5 +179,82 @@ module Data.Collection where
   instance collectionTree :: Collection Tree a where
     cons x t = Leaf x <> t
 
+    -- Use default implementations.
     filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
     partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+
+  -- Stack
+
+  instance foldableStack :: Foldable Stack where
+    fold _ z EmptyStack = z
+    fold f z (Push s ss) = s `f` (fold f z ss)
+
+    -- Use default implementation.
+    size ss = fold (const ((+) 1)) 0 ss
+
+  instance semigroupStack :: Semigroup (Stack a) where
+    (<>) EmptyStack s = s
+    (<>) s EmptyStack = s
+    (<>) (Push s ss) ss' = Push s (ss <> ss')
+
+  instance monoidStack :: Monoid (Stack a) where
+    mempty = EmptyStack
+
+  instance collectionStack :: Collection Stack a where
+    cons s ss = Push s ss
+
+    -- Use default implementations.
+    filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
+    partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+
+  instance sequenceStack :: Sequence Stack a where
+    foldl f z ss = fold (flip f) z ss
+
+    last EmptyStack = SeqNull
+    last (Push s ss) = SeqCons s ss
+
+    -- Use default implementations.
+    foldr f z ss = foldl (flip f) z (reverse ss)
+    first ss = case last (reverse ss) of
+      SeqCons s ss' -> SeqCons s (reverse ss')
+      SeqNull -> SeqNull
+    reverse ss = foldl (flip cons) mempty ss
+    snoc ss s = reverse (cons s (reverse ss))
+
+  -- Queue
+
+  instance foldableQueue :: Foldable Queue where
+    fold _ z EmptyQueue = z
+    fold f z (Enqueue q qs) = q `f` (fold f z qs)
+
+    -- Use default implementation.
+    size ss = fold (const ((+) 1)) 0 ss
+
+  instance semigroupQueue :: Semigroup (Queue a) where
+    (<>) EmptyQueue q = q
+    (<>) q EmptyQueue = q
+    (<>) (Enqueue q qs) qs' = Enqueue q (qs <> qs')
+
+  instance monoidQueue :: Monoid (Queue a) where
+    mempty = EmptyQueue
+
+  instance collectionQueue :: Collection Queue a where
+    cons q qs = Enqueue q qs
+
+    -- Use default implementations.
+    filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
+    partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+
+  instance sequenceQueue :: Sequence Queue a where
+    foldl f z qs = fold (flip f) z qs
+
+    first EmptyQueue = SeqNull
+    first (Enqueue q qs) = SeqCons q qs
+
+    -- Use default implementations.
+    foldr f z qs = foldl (flip f) z (reverse qs)
+    last qs = case first (reverse qs) of
+      SeqCons q qs' -> SeqCons q (reverse qs')
+      SeqNull -> SeqNull
+    reverse qs = foldl (flip cons) mempty qs
+    snoc qs q = reverse (cons q (reverse qs))
