@@ -21,6 +21,7 @@
   "dependencies": {
     "purescript-arrays": "*",
     "purescript-tuples": "*",
-    "purescript-monoid": "*"
+    "purescript-monoid": "*",
+    "purescript-maybe": "*"
   }
 }
