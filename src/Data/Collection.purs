@@ -1,6 +1,7 @@
 module Data.Collection where
 
   import Data.Array ((:))
+  import Data.Monoid
   import Data.Tuple
 
   data SeqView s a = SeqNull
@@ -10,31 +11,43 @@ module Data.Collection where
     show SeqNull = "SeqNull"
     show (SeqCons x xs) = "SeqCons(" ++ show x ++ ", " ++ show xs ++ ")"
 
+  -- | This differs from the standard Foldable
+  --   in that it doesn't attempt to impose an ordering.
+  class Foldable f where
+    fold :: forall a b. (a -> b -> b) -> b -> f a -> b
+
   -- | An unordered collection of things.
-  --   This class seems to have too many methods.
-  --   It might be best to split it up.
-  class Collection c a where
+  class (Foldable c, Monoid (c a)) <= Collection c a where
+    -- `size` and `cons` are the minimum required to implement a `Collection`
     size :: c a -> Number
     cons :: a -> c a -> c a
 
+    -- `filter` and `partition` should have default implementations.
     filter :: (a -> Boolean) -> c a -> c a
+    -- filter p xs = fold (\x acc -> if p x then cons x acc else acc) unit xs
     partition :: (a -> Boolean) -> c a -> Tuple (c a) (c a)
-
-    -- Not-Quite-Foldable, since order is unimportant.
-    -- At least, not the standard Foldable.
-    fold :: forall b. (a -> b -> b) -> b -> c a -> b
-
-    -- Seems like a Monoid
-    unit :: c a
-    union :: c a -> c a -> c a
+    -- partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
 
   -- | Collection with some sense of order.
   class (Collection s a) <= Sequence s a where
-    snoc :: s a -> a -> s a
-    first :: s a -> SeqView s a
-    last :: s a -> SeqView s a
+    -- Minimum definition needs `foldl`, and one of `first` or `last`.
     foldl :: forall b. (a -> b -> a) -> a -> s b -> a
+    first :: s a -> SeqView s a
+    -- first xs = case last (reverse xs) of
+    --   SeqCons x xs' -> SeqCons x (reverse xs')
+    --   SeqNull -> SeqNull
+    snoc :: s a -> a -> s a
+    -- snoc xs x = reverse (cons x (reverse xs))
+    last :: s a -> SeqView s a
+    -- last xs = case first (reverse xs) of
+    --   SeqCons x xs' -> SeqCons x (reverse xs')
+    --   SeqNull -> SeqNull
     reverse :: s a -> s a
+    -- reverse xs = foldl (flip cons) mempty xs
+
+  instance foldableArray :: Foldable [] where
+    fold _ z [] = z
+    fold f z (x:xs) = x `f` (fold f z xs)
 
   instance collectionArray :: Collection [] a where
     size [] = 0
@@ -42,16 +55,8 @@ module Data.Collection where
 
     cons = (:)
 
-    filter = Data.Array.filter
-
-    partition p xs = Tuple (Data.Array.filter p xs) (Data.Array.filter (not <<< p) xs)
-
-    fold _ z [] = z
-    fold f z (x:xs) = x `f` (fold f z xs)
-
-    unit = []
-
-    union = (++)
+    filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
+    partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
 
   instance sequenceArray :: Sequence [] a where
     snoc xs x = xs ++ [x]
