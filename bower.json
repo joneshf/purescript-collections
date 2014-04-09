@@ -1,0 +1,25 @@
+{
+  "name": "purescript-collections",
+  "version": "0.0.0",
+  "authors": [
+    "joneshf <jones3.hardy@gmail.com>"
+  ],
+  "description": "Collection library.",
+  "keywords": [
+    "purescript",
+    "collection"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/purescript/purescript-collections",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "purescript-arrays": "*",
+    "purescript-tuples": "*"
+  }
+}
