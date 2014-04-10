@@ -258,3 +258,25 @@ module Data.Collection where
       SeqNull -> SeqNull
     reverse qs = foldl (flip cons) mempty qs
     snoc qs q = reverse (cons q (reverse qs))
+
+  -- Derivable combinators
+
+  -- These could actually be generalized to work with `BoolLike`
+  -- if `BoolLike` had a top and bottom.
+  and :: forall f. (Foldable f) => f Boolean -> Boolean
+  and = all id
+
+  or :: forall f. (Foldable f) => f Boolean -> Boolean
+  or = any id
+
+  all :: forall a f. (Foldable f) => (a -> Boolean) -> f a -> Boolean
+  all p = fold ((&&) <<< p) true
+
+  any :: forall a f. (Foldable f) => (a -> Boolean) -> f a -> Boolean
+  any p = fold ((||) <<< p) false
+
+  sum :: forall f. (Foldable f) => f Number -> Number
+  sum = fold (+) 0
+
+  product :: forall f. (Foldable f) => f Number -> Number
+  product = fold (*) 1
