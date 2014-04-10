@@ -29,6 +29,7 @@ module Data.Collection where
     show EmptyStack = "EmptyStack"
     show (Push s ss) = "Stack(" ++ show s ++ ", " ++ show ss ++ ")"
 
+  -- This should have O(1) insert and removal.
   data Queue a = EmptyQueue
                | Enqueue a (Queue a)
 
@@ -41,128 +42,124 @@ module Data.Collection where
   --   Specifically, there is no notion of `foldl` or `foldr`
   --
   --   It intentionally conflict with the standard `Foldable`.
-  --
-  --   Minimum definition needs `fold`.
-  class Foldable f where
-    fold :: forall a b. (a -> b -> b) -> b -> f a -> b
-    -- `size` should have a default implementation.
-    size :: forall a. f a -> Number
-    -- size = fold (const ((+) 1)) 0
+  class Foldable f a where
+    fold :: forall b. (a -> b -> b) -> b -> f a -> b
 
   -- | An unordered collection of things.
-  --   Minimum definition needs `cons`.
-  class (Foldable c, Monoid (c a)) <= Collection c a where
-    cons :: a -> c a -> c a
+  --   One of either `add` or `singleton` is required.
+  class (Foldable c a, Monoid (c a)) <= Collection c a where
+    add :: a -> c a -> c a
+    -- add x xs = singleton x <> xs
 
-    -- `filter` and `partition` should have default implementations.
-    filter :: (a -> Boolean) -> c a -> c a
-    -- filter p xs = fold (\x acc -> if p x then cons x acc else acc) unit xs
-    partition :: (a -> Boolean) -> c a -> Tuple (c a) (c a)
-    -- partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+    singleton :: a -> c a
+    -- singleton x = add x mempty
+
+    -- (<>) :: c a -> c a -> c a
+    -- (<>) (add x xs) ys = add x (xs <> ys)
 
   -- | Collection with some sense of order.
-  --   Minimum definition needs one of `foldl` or `foldr`,
-  --   and one of `first` or `last`.
+  --   Minimum definition needs `reverse` and one of each:
+  --   * `cons` or `snoc`
+  --   * `foldl` or `foldr`
+  --   * `front` or `back`
   class (Collection s a) <= Sequence s a where
-    foldl :: forall b. (a -> b -> a) -> a -> s b -> a
-    -- foldl f z xs = foldr (flip f) z (reverse xs)
-    -- `foldr` has the same type as `fold`,
-    -- but enforces an ordering on the evaluation.
-    foldr :: forall b. (a -> b -> b) -> b -> s a -> b
-    -- foldr f z xs = foldl (flip f) z (reverse xs)
-    first :: s a -> SeqView s a
-    -- first xs = case last (reverse xs) of
-    --   SeqCons x xs' -> SeqCons x (reverse xs')
-    --   SeqNull -> SeqNull
-    last :: s a -> SeqView s a
-    -- last xs = case first (reverse xs) of
-    --   SeqCons x xs' -> SeqCons x (reverse xs')
-    --   SeqNull -> SeqNull
-    reverse :: s a -> s a
-    -- reverse xs = foldl (flip cons) mempty xs
+    cons :: a -> s a -> s a
+    -- cons x xs = reverse (snoc (reverse xs) x)
+
     snoc :: s a -> a -> s a
     -- snoc xs x = reverse (cons x (reverse xs))
 
+    foldl :: forall b. (b -> a -> b) -> b -> s a -> b
+    -- foldl f z xs = foldr (flip f) z (reverse xs)
+
+    -- `foldr` has the same type as `fold`,
+    -- but enforces an ordering on the evaluation.
+    -- in some cases `foldr` == `fold`, but this cannot be guaranteed.
+    foldr :: forall b. (a -> b -> b) -> b -> s a -> b
+    -- foldr f z xs = foldl (flip f) z (reverse xs)
+
+    front :: s a -> Maybe (Tuple a (s a))
+    -- front xs = case back (reverse xs) of
+    --   Just (Tuple x xs') -> Just (Tuple x (reverse xs'))
+    --   Nothing -> Nothing
+
+    back :: s a -> Maybe (Tuple a (s a))
+    -- back xs = case front (reverse xs) of
+    --   Just (Tuple x xs') -> Just (Tuple x (reverse xs'))
+    --   Nothing -> Nothing
+
+    reverse :: s a -> s a
+
   -- Array
 
-  instance foldableArray :: Foldable [] where
+  instance foldableArray :: Foldable [] a where
     fold _ z [] = z
     fold f z (x:xs) = x `f` (fold f z xs)
 
-    size xs = fold (const ((+) 1)) 0 xs
-
   instance collectionArray :: Collection [] a where
-    cons = (:)
-
-    filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
-    partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+    add = (:)
+    singleton x = [x]
 
   instance sequenceArray :: Sequence [] a where
+    cons = (:)
+    snoc xs x = xs ++ [x]
+
     foldl _ z [] = z
     foldl f z (x:xs) = foldl f (z `f` x) xs
 
     foldr f z xs = fold f z xs
 
-    first [] = SeqNull
-    first (x:xs) = SeqCons x xs
+    front [] = Nothing
+    front (x:xs) = Just (Tuple x xs)
 
-    last xs = case first (reverse xs) of
-      SeqCons x xs' -> SeqCons x (reverse xs')
-      SeqNull -> SeqNull
+    back xs = case front (reverse xs) of
+      Just (Tuple x xs') -> Just (Tuple x (reverse xs'))
+      Nothing -> Nothing
 
-    snoc xs x = xs ++ [x]
-
-    reverse = Data.Array.reverse
+    reverse xs = Data.Array.reverse xs
 
   -- Maybe
 
-  instance foldableMaybe :: Foldable Maybe where
+  instance foldableMaybe :: Foldable Maybe a where
     fold _ z Nothing = z
     fold f z (Just x) = x `f` z
 
-    size Nothing = 0
-    size (Just _) = 1
-
   instance semigroupMaybe :: (Semigroup a) => Semigroup (Maybe a) where
+    (<>) Nothing  m        = m
+    (<>) m        Nothing  = m
     (<>) (Just x) (Just y) = Just (x <> y)
-    (<>) _        _        = Nothing
 
   instance monoidMaybe :: (Monoid a) => Monoid (Maybe a) where
     mempty = Nothing
 
   instance collectionMaybe :: (Monoid a) => Collection Maybe a where
-    cons x Nothing = Just x
-    cons x (Just y) = Just (x <> y)
-
-    -- Use default implementations.
-    filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
-    partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+    add m ms = cons m ms
+    singleton x = Just x
 
   instance sequenceMaybe :: (Monoid a) => Sequence Maybe a where
-    foldl _ z Nothing = z
-    foldl f z (Just x) = z `f` x
-
-    foldr f z xs = fold f z xs
-
-    first Nothing = SeqNull
-    first (Just x) = SeqCons x Nothing
-
-    last x = first x
+    cons x Nothing = Just x
+    cons x (Just y) = Just (x <> y)
 
     snoc Nothing x = Just x
     snoc (Just x) y = Just (x <> y)
 
-    reverse = id
+    foldl f z xs = fold (flip f) z xs
+
+    foldr f z xs = fold f z xs
+
+    front Nothing = Nothing
+    front (Just x) = Just (Tuple x Nothing)
+
+    back x = front x
+
+    reverse xs = xs
 
   -- Tree
 
-  instance foldableTree :: Foldable Tree where
+  instance foldableTree :: Foldable Tree a where
     fold _ z Bud  = z
     fold f z (Leaf x) = x `f` z
     fold f z (Branch l r) = fold f (fold f z l) r
-
-    -- Use default implementation.
-    size xs = fold (const ((+) 1)) 0 xs
 
   -- Using a `Tree` as a `Semigroup` only makes sense if we ignore
   -- the structure of the tree, and focus on the semantics of a tree.
@@ -177,20 +174,14 @@ module Data.Collection where
     mempty = Bud
 
   instance collectionTree :: Collection Tree a where
-    cons x t = Leaf x <> t
-
-    -- Use default implementations.
-    filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
-    partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+    add t ts = singleton t <> ts
+    singleton x = Leaf x
 
   -- Stack
 
-  instance foldableStack :: Foldable Stack where
+  instance foldableStack :: Foldable Stack a where
     fold _ z EmptyStack = z
     fold f z (Push s ss) = s `f` (fold f z ss)
-
-    -- Use default implementation.
-    size ss = fold (const ((+) 1)) 0 ss
 
   instance semigroupStack :: Semigroup (Stack a) where
     (<>) EmptyStack s = s
@@ -201,34 +192,34 @@ module Data.Collection where
     mempty = EmptyStack
 
   instance collectionStack :: Collection Stack a where
-    cons s ss = Push s ss
-
-    -- Use default implementations.
-    filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
-    partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+    add s ss = Push s ss
+    singleton x = Push x EmptyStack
 
   instance sequenceStack :: Sequence Stack a where
-    foldl f z ss = fold (flip f) z ss
+    cons s ss = Push s ss
 
-    last EmptyStack = SeqNull
-    last (Push s ss) = SeqCons s ss
+    foldr f z ss = fold f z ss
+
+    front EmptyStack = Nothing
+    front (Push s ss) = Just (Tuple s ss)
 
     -- Use default implementations.
-    foldr f z ss = foldl (flip f) z (reverse ss)
-    first ss = case last (reverse ss) of
-      SeqCons s ss' -> SeqCons s (reverse ss')
-      SeqNull -> SeqNull
-    reverse ss = foldl (flip cons) mempty ss
     snoc ss s = reverse (cons s (reverse ss))
+
+    foldl f z ss = foldr (flip f) z (reverse ss)
+
+    back ss = case front (reverse ss) of
+      Just (Tuple s ss') -> Just (Tuple s (reverse ss'))
+      Nothing -> Nothing
+
+    reverse EmptyStack = EmptyStack
+    reverse (Push s ss) = reverse ss <> singleton s
 
   -- Queue
 
-  instance foldableQueue :: Foldable Queue where
+  instance foldableQueue :: Foldable Queue a where
     fold _ z EmptyQueue = z
     fold f z (Enqueue q qs) = q `f` (fold f z qs)
-
-    -- Use default implementation.
-    size ss = fold (const ((+) 1)) 0 ss
 
   instance semigroupQueue :: Semigroup (Queue a) where
     (<>) EmptyQueue q = q
@@ -239,27 +230,42 @@ module Data.Collection where
     mempty = EmptyQueue
 
   instance collectionQueue :: Collection Queue a where
-    cons q qs = Enqueue q qs
-
-    -- Use default implementations.
-    filter p xs = fold (\x acc -> if p x then cons x acc else acc) mempty xs
-    partition p xs = Tuple (filter p xs) (filter (not <<< p) xs)
+    add q qs = snoc qs q
+    singleton q = Enqueue q EmptyQueue
 
   instance sequenceQueue :: Sequence Queue a where
-    foldl f z qs = fold (flip f) z qs
+    snoc EmptyQueue q = Enqueue q EmptyQueue
+    snoc (Enqueue q' qs) q = Enqueue q' (snoc qs q)
 
-    first EmptyQueue = SeqNull
-    first (Enqueue q qs) = SeqCons q qs
+    foldr f z qs = fold f z qs
+
+    front EmptyQueue = Nothing
+    front (Enqueue q qs) = Just (Tuple q qs)
 
     -- Use default implementations.
-    foldr f z qs = foldl (flip f) z (reverse qs)
-    last qs = case first (reverse qs) of
-      SeqCons q qs' -> SeqCons q (reverse qs')
-      SeqNull -> SeqNull
-    reverse qs = foldl (flip cons) mempty qs
-    snoc qs q = reverse (cons q (reverse qs))
+    cons q qs = reverse (snoc (reverse qs) q)
+
+    foldl f z qs = foldr (flip f) z (reverse qs)
+
+    back qs = case front (reverse qs) of
+      Just (Tuple q qs') -> Just (Tuple q (reverse qs'))
+      Nothing -> Nothing
+
+    reverse EmptyQueue = EmptyQueue
+    reverse (Enqueue q qs) = reverse qs <> singleton q
 
   -- Derivable combinators
+
+  -- Foldable
+
+  size :: forall a f. (Foldable f a) => f a -> Number
+  size fs = fold (const ((+) 1)) 0 fs
+
+  isEmpty :: forall a f. (Foldable f a) => f a -> Boolean
+  isEmpty fs = size fs == 0
+
+  isSingleton :: forall a f. (Foldable f a) => f a -> Boolean
+  isSingleton fs = size fs == 1
 
   and :: forall f. (Foldable f) => f Boolean -> Boolean
   and fs = all id fs
@@ -267,10 +273,10 @@ module Data.Collection where
   or :: forall f. (Foldable f) => f Boolean -> Boolean
   or fs = any id fs
 
-  all :: forall a f. (Foldable f) => (a -> Boolean) -> f a -> Boolean
+  all :: forall a f. (Foldable f a) => (a -> Boolean) -> f a -> Boolean
   all p fs = fold ((&&) <<< p) true fs
 
-  any :: forall a f. (Foldable f) => (a -> Boolean) -> f a -> Boolean
+  any :: forall a f. (Foldable f a) => (a -> Boolean) -> f a -> Boolean
   any p fs = fold ((||) <<< p) false fs
 
   sum :: forall f. (Foldable f) => f Number -> Number
@@ -279,23 +285,77 @@ module Data.Collection where
   product :: forall f. (Foldable f) => f Number -> Number
   product fs = fold (*) 1 fs
 
-  null :: forall a f. (Foldable f) => f a -> Boolean
-  null fs = size fs == 0
-
-  elem :: forall a f. (Eq a, Foldable f) => a -> f a -> Boolean
+  elem :: forall a f. (Eq a, Foldable f a) => a -> f a -> Boolean
   elem f fs = any ((==) f) fs
 
-  notElem :: forall a f. (Eq a, Foldable f) => a -> f a -> Boolean
+  notElem :: forall a f. (Eq a, Foldable f a) => a -> f a -> Boolean
   notElem f fs = not (elem f fs)
 
+  contains :: forall a f. (Eq a, Foldable f a) => f a -> f a -> Boolean
+  contains cs cs' = all (\c ->  c `elem` cs) cs'
+
+  -- Collection
+
   remove :: forall a c. (Eq a, Collection c a) => a -> c a -> c a
-  remove f fs = filter ((/=) f) fs
+  remove c cs = filter ((/=) c) cs
+
+  filter :: forall a c. (Collection c a) => (a -> Boolean) -> c a -> c a
+  filter p cs = fold (\c acc -> if p c then add c acc else acc) mempty cs
+
+  partition :: forall a c. (Collection c a) => (a -> Boolean) -> c a -> Tuple (c a) (c a)
+  partition p cs = fold go (Tuple mempty mempty) cs
+    where
+      go c (Tuple pass fail) | p c = Tuple (add c pass) fail
+      go c (Tuple pass fail)       = Tuple pass (add c fail)
+
+  toArray :: forall a c. (Collection c a) => c a -> [a]
+  toArray cs = fold (:) [] cs
+
+  fromArray :: forall a c. (Collection c a) => [a] -> c a
+  fromArray xs = fold ((<>) <<< singleton) mempty xs
+
+  -- Sequence
 
   infixr 6 <:
   infixl 6 :>
 
-  (<:) :: forall a c. (Collection c a) => a -> c a -> c a
+  (<:) :: forall a s. (Sequence s a) => a -> s a -> s a
   (<:) = cons
 
   (:>) :: forall a s. (Sequence s a) => s a -> a -> s a
   (:>) = snoc
+
+  head :: forall a s. (Sequence s a) => s a -> Maybe a
+  head ss = maybe Nothing (Just <<< fst) (front ss)
+
+  tail :: forall a s. (Sequence s a) => s a -> Maybe (s a)
+  tail ss = maybe Nothing (Just <<< snd) (front ss)
+
+  last :: forall a s. (Sequence s a) => s a -> Maybe a
+  last ss = maybe Nothing (Just <<< fst) (back ss)
+
+  init :: forall a s. (Sequence s a) => s a -> Maybe (s a)
+  init ss = maybe Nothing (Just <<< snd) (back ss)
+
+  take :: forall a s. (Sequence s a) => Number -> s a -> s a
+  take n ss = fst $ foldl go (Tuple mempty n) ss
+    where
+      go acc@(Tuple _ n') _ | n' < 1 = acc
+      go (Tuple acc n') s = Tuple (acc :> s) (n' - 1)
+
+  drop :: forall a s. (Sequence s a) => Number -> s a -> s a
+  drop n ss = fst $ foldl go (Tuple mempty n) ss
+    where
+      go (Tuple acc n') _ | n' > 0 = Tuple acc (n' - 1)
+      go (Tuple acc n') s = Tuple (acc :> s) n'
+
+  -- isSorted :: forall a s. (Ord a, Sequence s a) => s a -> Boolean
+  -- isSorted ss = fst $ foldl go (Tuple true mempty) ss
+  --   where
+  --     go (Tuple _ prev) s | isEmpty prev = Tuple true (singleton s)
+  --     go (Tuple sorted prev) s           = Tuple (sorted && le' prev s) (singleton s)
+  --     head' :: forall a s. (Sequence s a) => s a -> a
+  --     head' ss = case head ss of
+  --       Just s -> s
+  --     le' :: forall a s. (Ord a, Sequence s a) => s a -> s a -> Boolean
+  --     le' prev s = head' prev <= head' s
