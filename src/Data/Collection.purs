@@ -261,22 +261,41 @@ module Data.Collection where
 
   -- Derivable combinators
 
-  -- These could actually be generalized to work with `BoolLike`
-  -- if `BoolLike` had a top and bottom.
   and :: forall f. (Foldable f) => f Boolean -> Boolean
-  and = all id
+  and fs = all id fs
 
   or :: forall f. (Foldable f) => f Boolean -> Boolean
-  or = any id
+  or fs = any id fs
 
   all :: forall a f. (Foldable f) => (a -> Boolean) -> f a -> Boolean
-  all p = fold ((&&) <<< p) true
+  all p fs = fold ((&&) <<< p) true fs
 
   any :: forall a f. (Foldable f) => (a -> Boolean) -> f a -> Boolean
-  any p = fold ((||) <<< p) false
+  any p fs = fold ((||) <<< p) false fs
 
   sum :: forall f. (Foldable f) => f Number -> Number
-  sum = fold (+) 0
+  sum fs = fold (+) 0 fs
 
   product :: forall f. (Foldable f) => f Number -> Number
-  product = fold (*) 1
+  product fs = fold (*) 1 fs
+
+  null :: forall a f. (Foldable f) => f a -> Boolean
+  null fs = size fs == 0
+
+  elem :: forall a f. (Eq a, Foldable f) => a -> f a -> Boolean
+  elem f fs = any ((==) f) fs
+
+  notElem :: forall a f. (Eq a, Foldable f) => a -> f a -> Boolean
+  notElem f fs = not (elem f fs)
+
+  remove :: forall a c. (Eq a, Collection c a) => a -> c a -> c a
+  remove f fs = filter ((/=) f) fs
+
+  infixr 6 <:
+  infixl 6 :>
+
+  (<:) :: forall a c. (Collection c a) => a -> c a -> c a
+  (<:) = cons
+
+  (:>) :: forall a s. (Sequence s a) => s a -> a -> s a
+  (:>) = snoc
