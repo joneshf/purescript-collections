@@ -318,12 +318,16 @@ module Data.Collection where
 
   infixr 6 <:
   infixl 6 :>
+  infixl 8 !
 
   (<:) :: forall a s. (Sequence s a) => a -> s a -> s a
   (<:) = cons
 
   (:>) :: forall a s. (Sequence s a) => s a -> a -> s a
   (:>) = snoc
+
+  (!) :: forall a s. (Sequence s a) => s a -> Number -> Maybe a
+  (!) ss n = head $ take n ss
 
   head :: forall a s. (Sequence s a) => s a -> Maybe a
   head ss = maybe Nothing (Just <<< fst) (front ss)
@@ -349,13 +353,83 @@ module Data.Collection where
       go (Tuple acc n') _ | n' > 0 = Tuple acc (n' - 1)
       go (Tuple acc n') s = Tuple (acc :> s) n'
 
-  -- isSorted :: forall a s. (Ord a, Sequence s a) => s a -> Boolean
-  -- isSorted ss = fst $ foldl go (Tuple true mempty) ss
-  --   where
-  --     go (Tuple _ prev) s | isEmpty prev = Tuple true (singleton s)
-  --     go (Tuple sorted prev) s           = Tuple (sorted && le' prev s) (singleton s)
-  --     head' :: forall a s. (Sequence s a) => s a -> a
-  --     head' ss = case head ss of
-  --       Just s -> s
-  --     le' :: forall a s. (Ord a, Sequence s a) => s a -> s a -> Boolean
-  --     le' prev s = head' prev <= head' s
+  splitAt :: forall a s. (Sequence s a) => Number -> s a -> Tuple (s a) (s a)
+  splitAt n ss = Tuple (take n ss) (drop n ss)
+
+  isSorted :: forall a s. (Ord a, Sequence s a) => s a -> Boolean
+  isSorted ss = fst $ foldl go (Tuple true Nothing) ss
+    where
+      go (Tuple _      Nothing)     s = Tuple true                  (Just s)
+      go (Tuple sorted (Just prev)) s = Tuple (sorted && prev <= s) (Just s)
+
+  -- sort :: forall a s. (Ord a, Sequence s a) => s a -> s a
+  sort :: forall a. (Ord a) => [a] -> [a]
+  sort ss = sortBy compare ss
+  sortBy :: forall a. (a -> a -> Ordering) -> [a] -> [a]
+  sortBy cmp ss = mergeAll $ sequences ss
+    where
+      sequences ss | size ss > 1 =
+        let a = fromJust (ss ! 1)
+            b = fromJust (ss ! 2)
+            ss' = drop 2 ss
+        in case a `cmp` b of
+          GT -> descending b (singleton a) ss'
+          _  -> ascending  b (add a)       ss'
+      sequences s = singleton s
+      -- sequences (a:b:xs) | a `cmp` b == GT = descending b [a]  xs
+      -- sequences (a:b:xs)  = ascending  b ((:) a) xs
+      -- sequences xs = [xs]
+
+      descending a as bs | size bs > 0 =
+        let bs' = drop 1 bs
+            b = fromJust (bs ! 1)
+        in case a `cmp` b of
+          GT -> descending b (add a as) bs'
+          _  -> add (add a as) (sequences bs')
+      descending a as bs = add (add a as) (sequences bs)
+      -- descending a as (b:bs)
+      --   | a `cmp` b == GT = descending b (a:as) bs
+      -- descending a as bs  = (a:as): sequences bs
+
+      -- ascending a as bs | size bs > 1 =
+      --   let bs' = drop 1 bs
+      --       b = fromJust (bs ! 1)
+      --   in case a `cmp` b of
+      --     GT -> as (add (singleton a) (sequences bs'))
+      --     _  -> ascending b (\ys -> as (add a ys)) bs'
+      ascending a as (b:bs)
+        | a `cmp` b /= GT = ascending b (\ys -> as (a:ys)) bs
+      ascending a as bs   = as [a]: sequences bs
+
+      mergeAll xs | isSingleton xs = fromJust (head xs)
+      mergeAll xs = mergeAll (mergePairs xs)
+      -- mergeAll [x] = x
+      -- mergeAll xs  = mergeAll (mergePairs xs)
+
+      mergePairs abxs | size abxs > 1 =
+        let a = fromJust $ abxs ! 1
+            b = fromJust $ abxs ! 2
+            xs = drop 2 abxs
+        in (merge a b) `add` (mergePairs xs)
+      mergePairs xs = xs
+      -- mergePairs (a:b:xs) = merge a b: mergePairs xs
+      -- mergePairs xs       = xs
+
+      merge aas bbs | size aas > 1 && size bbs > 1 =
+        let a = fromJust $ aas ! 1
+            b = fromJust $ bbs ! 1
+            as = drop 1 aas
+            bs = drop 1 bbs
+        in case a `cmp` b of
+          GT -> b `add` merge aas bs
+          _  -> a `add` merge as bbs
+      merge as bs | isEmpty as = bs
+      merge as bs | isEmpty bs = as
+
+      -- merge as@(a:as') bs@(b:bs') | a `cmp` b == GT = b:merge as  bs'
+      -- merge as@(a:as') bs@(b:bs')                   = a:merge as' bs
+      -- merge [] bs         = bs
+      -- merge as []         = as
+
+      fromJust :: forall a. Maybe a -> a
+      fromJust (Just x) = x
