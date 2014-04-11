@@ -326,9 +326,6 @@ module Data.Collection where
   (:>) :: forall a s. (Sequence s a) => s a -> a -> s a
   (:>) = snoc
 
-  (!) :: forall a s. (Sequence s a) => s a -> Number -> Maybe a
-  (!) ss n = head $ take n ss
-
   head :: forall a s. (Sequence s a) => s a -> Maybe a
   head ss = maybe Nothing (Just <<< fst) (front ss)
 
@@ -362,74 +359,75 @@ module Data.Collection where
       go (Tuple _      Nothing)     s = Tuple true                  (Just s)
       go (Tuple sorted (Just prev)) s = Tuple (sorted && prev <= s) (Just s)
 
-  -- sort :: forall a s. (Ord a, Sequence s a) => s a -> s a
-  sort :: forall a. (Ord a) => [a] -> [a]
+  {-
+    This is a lift from Haskell's `Data.List.sort` and `Data.List.sortby`.
+
+    There might be something simple that I'm missing or
+    maybe I've been staring at this for too long,
+    but it doesn't seem to typecheck with a `where` clause in the general case.
+    Thus, we have to thread the compare function through each function,
+    and have these horrendous type signatures.
+
+    Suffice to say, this could be cleaned up greatly.
+  -}
+  sort :: forall a s. (Foldable s (s a), Ord a, Sequence s a, Sequence s (s a)) => s a -> s a
   sort ss = sortBy compare ss
-  sortBy :: forall a. (a -> a -> Ordering) -> [a] -> [a]
-  sortBy cmp ss = mergeAll $ sequences ss
-    where
-      sequences ss | size ss > 1 =
-        let a = fromJust (ss ! 1)
-            b = fromJust (ss ! 2)
-            ss' = drop 2 ss
-        in case a `cmp` b of
-          GT -> descending b (singleton a) ss'
-          _  -> ascending  b (add a)       ss'
-      sequences s = singleton s
-      -- sequences (a:b:xs) | a `cmp` b == GT = descending b [a]  xs
-      -- sequences (a:b:xs)  = ascending  b ((:) a) xs
-      -- sequences xs = [xs]
 
-      descending a as bs | size bs > 0 =
-        let bs' = drop 1 bs
-            b = fromJust (bs ! 1)
-        in case a `cmp` b of
-          GT -> descending b (add a as) bs'
-          _  -> add (add a as) (sequences bs')
-      descending a as bs = add (add a as) (sequences bs)
-      -- descending a as (b:bs)
-      --   | a `cmp` b == GT = descending b (a:as) bs
-      -- descending a as bs  = (a:as): sequences bs
+  sortBy :: forall a s. (Foldable s (s a), Sequence s a, Sequence s (s a)) => (a -> a -> Ordering) -> s a -> s a
+  sortBy cmp ss = mergeAll cmp $ sequences cmp ss
 
-      -- ascending a as bs | size bs > 1 =
-      --   let bs' = drop 1 bs
-      --       b = fromJust (bs ! 1)
-      --   in case a `cmp` b of
-      --     GT -> as (add (singleton a) (sequences bs'))
-      --     _  -> ascending b (\ys -> as (add a ys)) bs'
-      ascending a as (b:bs)
-        | a `cmp` b /= GT = ascending b (\ys -> as (a:ys)) bs
-      ascending a as bs   = as [a]: sequences bs
+  -- This is not safe in the slightest,
+  (!) :: forall a s. (Sequence s a) => s a -> Number -> a
+  (!) ss n = case head $ drop n ss of Just x -> x
 
-      mergeAll xs | isSingleton xs = fromJust (head xs)
-      mergeAll xs = mergeAll (mergePairs xs)
-      -- mergeAll [x] = x
-      -- mergeAll xs  = mergeAll (mergePairs xs)
+  sequences :: forall a s. (Foldable s (s a), Sequence s a, Sequence s (s a)) => (a -> a -> Ordering) -> s a -> s (s a)
+  sequences cmp abss | size abss > 1 =
+    let a = abss ! 0
+        b = abss ! 1
+        ss = drop 2 abss
+    in case a `cmp` b of
+      GT -> descending cmp b (singleton a) ss
+      _  -> ascending  cmp b (add a)       ss
+  sequences cmp s = singleton s
 
-      mergePairs abxs | size abxs > 1 =
-        let a = fromJust $ abxs ! 1
-            b = fromJust $ abxs ! 2
-            xs = drop 2 abxs
-        in (merge a b) `add` (mergePairs xs)
-      mergePairs xs = xs
-      -- mergePairs (a:b:xs) = merge a b: mergePairs xs
-      -- mergePairs xs       = xs
+  descending :: forall a s. (Foldable s (s a), Sequence s a, Sequence s (s a)) => (a -> a -> Ordering) -> a -> s a -> s a -> s (s a)
+  descending cmp a as bs | size bs > 0 =
+    let bs' = drop 1 bs
+        b = bs ! 0
+    in case a `cmp` b of
+      GT -> descending cmp b (add a as) bs'
+      _  -> add (add a as) (sequences cmp bs')
+  descending cmp a as bs = add (add a as) (sequences cmp bs)
 
-      merge aas bbs | size aas > 1 && size bbs > 1 =
-        let a = fromJust $ aas ! 1
-            b = fromJust $ bbs ! 1
-            as = drop 1 aas
-            bs = drop 1 bbs
-        in case a `cmp` b of
-          GT -> b `add` merge aas bs
-          _  -> a `add` merge as bbs
-      merge as bs | isEmpty as = bs
-      merge as bs | isEmpty bs = as
+  ascending :: forall a s. (Foldable s (s a), Sequence s a, Sequence s (s a)) => (a -> a -> Ordering) -> a -> (s a -> s a) -> s a -> s (s a)
+  ascending cmp a as bs | size bs > 0 =
+    let bs' = drop 1 bs
+        b = bs ! 0
+    in case a `cmp` b of
+      GT -> add (as (singleton a)) (sequences cmp bs)
+      _  -> ascending cmp b (\ys -> as (add a ys)) bs'
+  ascending cmp a as bs = add (as (singleton a)) (sequences cmp bs)
 
-      -- merge as@(a:as') bs@(b:bs') | a `cmp` b == GT = b:merge as  bs'
-      -- merge as@(a:as') bs@(b:bs')                   = a:merge as' bs
-      -- merge [] bs         = bs
-      -- merge as []         = as
+  mergeAll :: forall a s. (Foldable s (s a), Sequence s a, Sequence s (s a)) => (a -> a -> Ordering) -> s (s a) -> s a
+  mergeAll cmp xs | isSingleton xs = xs ! 0
+  mergeAll cmp xs = mergeAll cmp (mergePairs cmp xs)
 
-      fromJust :: forall a. Maybe a -> a
-      fromJust (Just x) = x
+  mergePairs :: forall a s. (Foldable s (s a), Sequence s a, Sequence s (s a)) => (a -> a -> Ordering) -> s (s a) -> s (s a)
+  mergePairs cmp abxs | size abxs > 1 =
+    let a = abxs ! 0
+        b = abxs ! 1
+        xs = drop 2 abxs
+    in (merge cmp a b) `add` (mergePairs cmp xs)
+  mergePairs cmp xs = xs
+
+  merge :: forall a s. (Sequence s a) => (a -> a -> Ordering) -> s a -> s a -> s a
+  merge cmp aas bbs | size aas > 0 && size bbs > 0 =
+    let a = aas ! 0
+        b = bbs ! 0
+        as = drop 1 aas
+        bs = drop 1 bbs
+    in case a `cmp` b of
+      GT -> b `add` merge cmp aas bs
+      _  -> a `add` merge cmp as bbs
+  merge cmp as bs | isEmpty as = bs
+  merge cmp as bs | isEmpty bs = as
